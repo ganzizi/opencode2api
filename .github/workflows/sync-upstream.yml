@@ -89,10 +89,20 @@ jobs:
             ghcr.io/ganzizi/opencode2api:latest
             ghcr.io/ganzizi/opencode2api:${{ steps.rev.outputs.sha }}
 
-      - name: Make image public
+      - name: Send image to server
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_SSH_KEY: ${{ secrets.OPENCODE2API_DEPLOY_KEY }}
         run: |
           set -euo pipefail
-          gh api --method PATCH /user/packages/container/opencode2api -f visibility=public
+          if [ -z "${DEPLOY_SSH_KEY}" ]; then
+            echo "deploy key missing"
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '49.51.247.137 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGRKdLleclsagD/wO+evL75VIoyOHAjm9izpWYUNVY2o' > ~/.ssh/known_hosts
+          docker pull ghcr.io/ganzizi/opencode2api:latest
+          docker save ghcr.io/ganzizi/opencode2api:latest | ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes root@49.51.247.137 docker load
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes root@49.51.247.137 'if [ -f /opt/opencode2api-stack/compose.yaml ]; then docker compose --project-directory /opt/opencode2api-stack -f /opt/opencode2api-stack/compose.yaml up -d --no-build --pull never --remove-orphans; fi'
