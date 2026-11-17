@@ -1,0 +1,90 @@
+# 上海时间每天 03:10 合并上游 main。服务器 05:50 只 docker pull，不在机器上编译。
+name: Sync upstream and publish image
+
+on:
+  schedule:
+    - cron: "10 19 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: opencode2api-upstream-image
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge upstream main
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/jasonxu114514/opencode2api.git
+          git fetch upstream main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git merge --no-edit upstream/main
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: sync
+    if: ${{ github.event_name != 'schedule' || needs.sync.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      # GITHUB_TOKEN 推送 main 不会再次触发本工作流，合并后的树必须在同一次 run 里编译。
+      - name: Check out merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve git sha
+        id: rev
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=${{ steps.rev.outputs.sha }}
+          tags: |
+            ghcr.io/ganzizi/opencode2api:latest
+            ghcr.io/ganzizi/opencode2api:${{ steps.rev.outputs.sha }}
