@@ -88,3 +88,11 @@ jobs:
           tags: |
             ghcr.io/ganzizi/opencode2api:latest
             ghcr.io/ganzizi/opencode2api:${{ steps.rev.outputs.sha }}
+
+      - name: Make image public
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api --method PATCH /user/packages/container/opencode2api -f visibility=public
